@@ -6,6 +6,10 @@ Proof of concept for Krack attack using channel-based MitM
 
 French article on [hackndo](http://beta.hackndo.com/krack/)
 
+## Environnement
+
+WPA2 with CCMP
+
 ## Usage
 
 ```
