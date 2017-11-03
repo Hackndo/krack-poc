@@ -6,7 +6,7 @@ Proof of concept for Krack attack using channel-based MitM
 
 French article on [hackndo](http://beta.hackndo.com/krack/)
 
-## Environnement
+## Environment
 
 WPA2 with CCMP
 
