@@ -8,7 +8,7 @@ French article on [hackndo](http://beta.hackndo.com/krack/)
 
 ## Usage
 
-```sh
+```
 # ./Krack.py -h
 usage: Krack.py [-h] [-d] -a ACCESS_POINT -i IFACE_AP -b CLIENT -j
                 IFACE_CLIENT -c CHANNEL
