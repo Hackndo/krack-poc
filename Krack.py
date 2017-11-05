@@ -476,10 +476,6 @@ class Krack:
         if pkt.type == 0 and pkt.subtype == 0x08:  # Beacon
             return 0
 
-        logger.log("[" + ("*" if pkt[Dot11].FCfield & 0x20 != 0 else " ") + "] [R]AP[/R] : " + pkt_types[pkt.type][
-            pkt.subtype] + " - src: " + pkt[Dot11].addr2 + " | dst: " + pkt[Dot11].addr1 + ' - ' + str(
-            self.find_channel(pkt)))
-
         # Check if pkt needs to be forwarded or not
         res = self.analyze_traffic(pkt)
 
