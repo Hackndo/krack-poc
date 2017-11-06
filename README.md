@@ -65,4 +65,4 @@ optional arguments:
 
 ## TODO
 
-* Use CSA (Channel Switch Announcement) to make client switch channel after deauth (See issue #1)
+* Use CSA (Channel Switch Announcement) to make client switch channel after deauth (See issue [#1](https://github.com/Hackndo/krack-poc/issues/1))
