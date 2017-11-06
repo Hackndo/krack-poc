@@ -65,4 +65,4 @@ optional arguments:
 
 ## TODO
 
-* For now, when jamming real AP on its channel, client won't hop on another channel. Need to find a way to make it switch.
+* Use CSA (Channel Switch Announcement) to make client switch channel after deauth (See issue #1)
