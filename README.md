@@ -65,6 +65,6 @@ optional arguments:
 
 ## TODO
 
- [*] Use CSA (Channel Switch Announcement) to make client switch channel after deauth (See issue [#1](https://github.com/Hackndo/krack-poc/issues/1))
- [ ] Save data sent by client
- [ ] Break cryptography with known plain text when counter is reinitialized
+- [X] Use CSA (Channel Switch Announcement) to make client switch channel after deauth (See issue [#1](https://github.com/Hackndo/krack-poc/issues/1))
+- [ ] Save data sent by client
+- [ ] Break cryptography with known plain text when counter is reinitialized
