@@ -1,4 +1,6 @@
-# [WORK IN PROGESS] PoC Krack (Key Reinstallation AttaCKs)
+# [NO SUPPORT] PoC Krack (Key Reinstallation AttaCKs)
+
+**PLEASE READ** : I have no intention to update or maintain this code. Feel free to use and modify it, but I won't answer to any comment/issue anymore. This project was difficult, I learnt what I wanted to learn, and developed what I wanted to develop, a quick-one-win to validate my comprehension of the vulnerability.
 
 Proof of concept for Krack attack using channel-based MitM
 
